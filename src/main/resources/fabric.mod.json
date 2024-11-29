@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "snowball_hole_filler",
+  "version": "${version}",
+  "name": "Snowball Hole Filler",
+  "description": "",
+  "authors": [],
+  "contact": {},
+  "license": "All-Rights-Reserved",
+  "icon": "assets/icon.jpeg",
+  "environment": "*",
+  "entrypoints": {
+    "client": [
+      "me.pawix25.client.Snowball_hole_fillerClient"
+    ],
+    "main": [
+      "me.pawix25.Snowball_hole_filler"
+    ]
+  },
+  "mixins": [
+    "snowball_hole_filler.mixins.json",
+    {
+      "config": "snowball_hole_filler.client.mixins.json",
+      "environment": "client"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "fabric": "*",
+    "minecraft": "${minecraft_version}"
+  }
+}
