@@ -32,16 +32,18 @@ public class Snowball_hole_filler implements ModInitializer {
     private final Map<UUID, Integer> playerBlocksFilled = new HashMap<>();
     private final Map<UUID, Map<String, Integer>> playerBlockTypes = new HashMap<>();
 
-    // Undo system
+    // Undo and Redo system
     private static class BlockChange {
         final BlockPos pos;
         final BlockState previousState;
+        final BlockState newState; // Added for redo functionality
         final long timestamp;
         final UUID playerUUID;
 
-        BlockChange(BlockPos pos, BlockState previousState, UUID playerUUID) {
+        BlockChange(BlockPos pos, BlockState previousState, BlockState newState, UUID playerUUID) {
             this.pos = pos;
             this.previousState = previousState;
+            this.newState = newState;
             this.timestamp = System.currentTimeMillis();
             this.playerUUID = playerUUID;
         }
@@ -49,6 +51,7 @@ public class Snowball_hole_filler implements ModInitializer {
 
     private static final int MAX_UNDO_HISTORY = 50;
     private final Map<UUID, LinkedList<List<BlockChange>>> playerUndoHistory = new HashMap<>();
+    private final Map<UUID, LinkedList<List<BlockChange>>> playerRedoHistory = new HashMap<>(); // Added for redo
 
     // Configuration class
     public static class SnowballConfig {
@@ -107,6 +110,13 @@ public class Snowball_hole_filler implements ModInitializer {
                             .executes(context -> {
                                 if (context.getSource().getEntity() instanceof ServerPlayerEntity player) {
                                     return undoLastOperation(player);
+                                }
+                                return 0;
+                            }))
+                    .then(CommandManager.literal("redo") // Added redo command
+                            .executes(context -> {
+                                if (context.getSource().getEntity() instanceof ServerPlayerEntity player) {
+                                    return redoLastOperation(player);
                                 }
                                 return 0;
                             }))
@@ -201,7 +211,33 @@ public class Snowball_hole_filler implements ModInitializer {
             blocksRestored++;
         }
 
+        playerRedoHistory.computeIfAbsent(playerUUID, k -> new LinkedList<>()).addFirst(lastOperation);
+
         player.sendMessage(Text.literal("Undid last operation. Restored " + blocksRestored + " blocks."), false);
+        return 1;
+    }
+
+    private int redoLastOperation(ServerPlayerEntity player) { // Added redo method
+        UUID playerUUID = player.getUuid();
+        LinkedList<List<BlockChange>> playerRedo = playerRedoHistory.get(playerUUID);
+
+        if (playerRedo == null || playerRedo.isEmpty()) {
+            player.sendMessage(Text.literal("No changes to redo!"), false);
+            return 0;
+        }
+
+        List<BlockChange> lastRedo = playerRedo.removeFirst();
+        ServerWorld world = player.getServerWorld();
+        int blocksRestored = 0;
+
+        for (BlockChange change : lastRedo) {
+            world.setBlockState(change.pos, change.newState);
+            blocksRestored++;
+        }
+
+        playerUndoHistory.computeIfAbsent(playerUUID, k -> new LinkedList<>()).addFirst(lastRedo);
+
+        player.sendMessage(Text.literal("Redid last operation. Restored " + blocksRestored + " blocks."), false);
         return 1;
     }
 
@@ -264,15 +300,15 @@ public class Snowball_hole_filler implements ModInitializer {
         for (int x = -radius; x <= radius; x++) {
             for (int z = -radius; z <= radius; z++) {
                 for (int yOffset = -maxDepth; yOffset <= 1; yOffset++) {
-                    BlockPos checkPos = pos.add(x, yOffset, z);
+                    BlockPos checkPos = pos.add(x, yOffset, z).toImmutable();
                     BlockState currentState = world.getBlockState(checkPos);
 
                     if ((currentState.isAir() || currentState.getBlock() == Blocks.WATER) &&
                             shouldFillAtHeight(world, checkPos)) {
                         BlockState blockToFillWith = findBestFillingBlock(world, checkPos, blockFrequency);
                         if (blockToFillWith != null) {
-                            // Store the change for undo
-                            operationChanges.add(new BlockChange(checkPos.toImmutable(), currentState, playerUUID));
+                            // Store the change for undo and redo
+                            operationChanges.add(new BlockChange(checkPos, currentState, blockToFillWith, playerUUID));
 
                             world.setBlockState(checkPos, blockToFillWith);
 
@@ -304,13 +340,15 @@ public class Snowball_hole_filler implements ModInitializer {
 
         // Store the operation in the undo history if there are changes and a player UUID
         if (!operationChanges.isEmpty() && playerUUID != null) {
-            playerUndoHistory.computeIfAbsent(playerUUID, k -> new LinkedList<>())
-                    .addFirst(operationChanges);
+            playerUndoHistory.computeIfAbsent(playerUUID, k -> new LinkedList<>()).addFirst(operationChanges);
 
             // Trim history if it exceeds the maximum size
             while (playerUndoHistory.get(playerUUID).size() > MAX_UNDO_HISTORY) {
                 playerUndoHistory.get(playerUUID).removeLast();
             }
+
+            // Clear redo history when a new operation is performed
+            playerRedoHistory.computeIfAbsent(playerUUID, k -> new LinkedList<>()).clear();
         }
     }
 
